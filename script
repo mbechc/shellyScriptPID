@@ -1,0 +1,79 @@
+// Shelly PID Temperature Control Script
+// Fully parameterized for different sensors and dynamic power measurement
+
+// PID Constants
+const TARGET_TEMP = 26.0;    // Setpoint temperature (°C)
+const SENSOR_ID = 100;       // ID of the external temperature sensor
+const RELAY_ID = 0;          // ID of the heating relay
+const Kp = 5.0;              // Proportional gain
+const Ki = 0.1;              // Integral gain
+const Kd = 2.0;              // Derivative gain
+const DEAD_BAND = 0.2;       // Prevents rapid switching (hysteresis)
+
+let integral = 0.0;  // Integral accumulation
+let lastError = 0.0;  // Previous error for derivative
+let lastTime = Shelly.getComponentStatus("sys").uptime;  // Get initial uptime
+
+// Function to read the external temperature sensor
+function getTemperature() {
+    let tempStatus = Shelly.getComponentStatus("temperature", SENSOR_ID);
+    return tempStatus ? tempStatus.tC : null;
+}
+
+// Function to turn the heater ON or OFF
+function setHeater(state) {
+    Shelly.call("Switch.Set", { id: RELAY_ID, on: state });
+}
+
+// Function to measure current power consumption
+function getPowerUsage() {
+    let powerStatus = Shelly.getComponentStatus("switch", RELAY_ID);
+    return powerStatus ? powerStatus.apower : 0;
+}
+
+// PID Control Loop
+function controlLoop() {
+    let currentTemp = getTemperature();
+    if (currentTemp === null) {
+        print("Error: Unable to read temperature!");
+        return;
+    }
+
+    let error = TARGET_TEMP - currentTemp;
+    let now = Shelly.getComponentStatus("sys").uptime;
+    let dt = now - lastTime;
+    lastTime = now;
+
+    // Integral term accumulation (prevents long-term error)
+    integral += error * dt;
+
+    // Derivative term (rate of change of error)
+    let derivative = (error - lastError) / dt;
+    lastError = error;
+
+    // PID Output Calculation
+    let output = (Kp * error) + (Ki * integral) + (Kd * derivative);
+
+    // ON/OFF Control with Deadband
+    let heaterOn = false;
+
+    if (error > DEAD_BAND) {
+        heaterOn = true;
+    } else if (error < -DEAD_BAND) {
+        heaterOn = false;
+    }
+
+    setHeater(heaterOn);
+
+    // Measure power dynamically
+    let powerUsage = getPowerUsage();
+
+    // Log output
+    print("Temp:", currentTemp.toFixed(2), "C | Heater:", heaterOn ? "ON" : "OFF", "| Power:", powerUsage.toFixed(2), "W");
+
+    // Schedule next iteration (every 1 sec)
+    Timer.set(1000, false, controlLoop);
+}
+
+// Start the control loop
+controlLoop();
