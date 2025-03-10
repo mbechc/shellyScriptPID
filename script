@@ -1,5 +1,5 @@
 // Shelly PID Temperature Control Script
-// Fully parameterized for different sensors and dynamic power measurement
+// Ensures continuous operation even if temperature sensor is unavailable at startup
 
 // PID Constants
 const TARGET_TEMP = 26.0;    // Setpoint temperature (°C)
@@ -31,14 +31,8 @@ function getPowerUsage() {
     return powerStatus ? powerStatus.apower : 0;
 }
 
-// PID Control Loop
-function controlLoop() {
-    let currentTemp = getTemperature();
-    if (currentTemp === null) {
-        print("Error: Unable to read temperature!");
-        return;
-    }
-
+// Main PID Control Logic
+function pidControlLoop(currentTemp) {
     let error = TARGET_TEMP - currentTemp;
     let now = Shelly.getComponentStatus("sys").uptime;
     let dt = now - lastTime;
@@ -56,7 +50,6 @@ function controlLoop() {
 
     // ON/OFF Control with Deadband
     let heaterOn = false;
-
     if (error > DEAD_BAND) {
         heaterOn = true;
     } else if (error < -DEAD_BAND) {
@@ -70,10 +63,29 @@ function controlLoop() {
 
     // Log output
     print("Temp:", currentTemp.toFixed(2), "C | Heater:", heaterOn ? "ON" : "OFF", "| Power:", powerUsage.toFixed(2), "W");
-
-    // Schedule next iteration (every 1 sec)
-    Timer.set(1000, false, controlLoop);
 }
 
-// Start the control loop
-controlLoop();
+/* **Event-Driven Update**
+Shelly.addStatusHandler(function (event) {
+    if (event.component === "temperature:" + SENSOR_ID) {
+        let currentTemp = event.delta.tC;
+        if (currentTemp !== undefined) {
+            pidControlLoop(currentTemp);
+        }
+    }
+});
+*/
+
+// **Fallback Timer (Runs Every 1s)**
+function fallbackControlLoop() {
+    let currentTemp = getTemperature();
+    if (currentTemp !== null) {
+        pidControlLoop(currentTemp);
+    } else {
+        print("Waiting for temperature sensor...");
+    }
+    Timer.set(1000, false, fallbackControlLoop);
+}
+
+// Start the fallback loop (ensures execution even if no events trigger)
+fallbackControlLoop();
